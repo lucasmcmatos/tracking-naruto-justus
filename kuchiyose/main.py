@@ -8,8 +8,12 @@ Rodar no Windows nativo (Python do Windows) para acesso a webcam e display.
 """
 
 import argparse
+import os
 import sys
 import cv2
+
+# Silencia os warnings de cap_v4l / obsensor ao sondar cameras
+os.environ.setdefault("OPENCV_LOG_LEVEL", "FATAL")
 
 from detector import HandDetector
 from state_machine import StateMachine
@@ -40,19 +44,44 @@ def parse_args():
     return p.parse_args()
 
 
-def open_capture(source, width, height):
-    src = int(source) if source.isdigit() else source
-    cap = cv2.VideoCapture(src)
+def _try_open(src, width, height):
+    cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
     if not cap.isOpened():
-        print(f"[ERRO] Nao foi possivel abrir a fonte: {source}")
-        sys.exit(1)
+        cap = cv2.VideoCapture(src)
+    if not cap.isOpened():
+        return None
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    # descarta frames iniciais pretos enquanto a camera inicializa
     for _ in range(15):
         cap.read()
     return cap
+
+
+def open_capture(source, width, height):
+    # Tenta o dispositivo especificado primeiro
+    src = int(source) if source.isdigit() else source
+    cap = _try_open(src, width, height)
+    if cap is not None:
+        return cap
+
+    # Se for índice numérico, tenta os outros índices antes de desistir
+    if isinstance(src, int):
+        for idx in range(6):
+            if idx == src:
+                continue
+            cap = _try_open(idx, width, height)
+            if cap is not None:
+                print(f"[INFO] Camera nao encontrada no indice {src}, usando indice {idx}.")
+                return cap
+
+    print(f"[ERRO] Nao foi possivel abrir a fonte: {source}")
+    print("       Se estiver no WSL2, a webcam pode nao estar acessivel.")
+    print("       Opcoes:")
+    print("         1. Use usbipd-win para conectar a webcam ao WSL2.")
+    print("         2. Grave um video no Windows e passe o caminho: python main.py --source video.mp4")
+    print("         3. Rode o script no Python nativo do Windows (fora do WSL2).")
+    sys.exit(1)
 
 
 def main():
